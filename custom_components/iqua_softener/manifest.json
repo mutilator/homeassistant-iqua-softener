@@ -11,5 +11,5 @@
   "loggers": ["iqua"],
   "quality_scale": "silver",
   "requirements": ["requests", "PyJWT"],
-  "version": "2.3.0"
+  "version": "2.3.1"
 }
