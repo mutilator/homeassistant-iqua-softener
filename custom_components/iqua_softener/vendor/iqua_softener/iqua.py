@@ -107,7 +107,15 @@ class IquaSoftener:
         self._websocket_lock = threading.Lock()
         self._websocket_lifecycle_lock = threading.Lock()
         self._websocket_connected_at: Optional[float] = None
-        self._websocket_max_duration = 170  # Reconnect after 170 seconds (before 3 min timeout)
+        self._websocket_force_reconnect = False
+        self._websocket_app_active_timeout = 300.0  # Default to 5 minutes (in seconds)
+        self._websocket_last_message_at = 0.0
+        # Reconnect to legacy API after 170 seconds to avoid the 3-minute timeout;
+        # For the new API (iqua2), the socket can stay alive longer, so set a much larger duration (e.g., 60 minutes)
+        if "iqua2.com" in self._api_base_url.lower():
+            self._websocket_max_duration = 3600 # 60 minutes
+        else:
+            self._websocket_max_duration = 170  # Reconnect after 170 seconds (before 3 min timeout)
         self._websocket_backoff = 60  # Initial backoff time in seconds
         self._websocket_max_backoff = 1800  # Maximum backoff time (30 minutes)
 
@@ -163,9 +171,9 @@ class IquaSoftener:
         """
         self._on_websocket_state_change = callback
 
-    def get_data(self) -> IquaSoftenerData:
+    def get_data(self, use_cache_only: bool = False) -> IquaSoftenerData:
         device_id = self._get_device_id()
-        device = self._get_device_detail(device_id)
+        device = self._get_device_detail(device_id, use_cache_only=use_cache_only)
         props = device.get("properties", {})
         enriched = device.get("enriched_data", {}).get("water_treatment", {})
 
@@ -181,6 +189,7 @@ class IquaSoftener:
             realtime_value = self.get_realtime_property(name)
             if realtime_value is not None:
                 return realtime_value
+            logger.debug("Property %s not found", name)
             if fallback_name:
                 return val(fallback_name, default)
             return val(name, default)
@@ -210,7 +219,10 @@ class IquaSoftener:
                 device_date_time = datetime.now()
 
         # Use real-time service_active if available
-        service_active = realtime_val("service_active", "service_active", True)
+        if "iqua2.com" in self._api_base_url.lower():
+            service_active = realtime_val("is_online", default=device.get("is_online", True))
+        else:
+            service_active = realtime_val("service_active", "service_active", True)
 
         if ZoneInfo is not None:
             timestamp = datetime.now(tz=ZoneInfo("UTC"))
@@ -613,7 +625,7 @@ class IquaSoftener:
                 self._websocket_backoff = self._rate_limit_backoff()
 
                 full_uri = self._build_websocket_url(ws_uri)
-                logger.info(f"Connecting to WebSocket: {full_uri}")
+                logger.debug(f"Connecting to WebSocket: {full_uri}")
 
                 if websockets is None:
                     # Ensure we're marked as disconnected when websockets library is unavailable
@@ -624,9 +636,10 @@ class IquaSoftener:
                     continue
 
                 async with websockets.connect(full_uri) as websocket:
-                    logger.info("WebSocket connected successfully")
+                    logger.debug("WebSocket connected successfully")
                     self._websocket_task = asyncio.current_task()
                     self._websocket_connected_at = time.time()
+                    self._websocket_last_message_at = time.time()
                     
                     # Notify connection state change callback
                     if self._on_websocket_state_change:
@@ -641,9 +654,25 @@ class IquaSoftener:
                             if self._websocket_connected_at:
                                 connection_duration = time.time() - self._websocket_connected_at
                                 if connection_duration >= self._websocket_max_duration:
-                                    logger.info(
+                                    logger.debug(
                                         f"WebSocket connection duration ({connection_duration:.1f}s) "
                                         f"exceeded max ({self._websocket_max_duration}s), reconnecting..."
+                                    )
+                                    break
+                            
+                            # Check if reconnect was requested (e.g. app_active is False)
+                            if getattr(self, "_websocket_force_reconnect", False):
+                                logger.debug("WebSocket reconnect requested (app_active=False), reconnecting...")
+                                self._websocket_force_reconnect = False
+                                break
+                            
+                            # Check if we've been inactive too long (idle timeout)
+                            if self._websocket_last_message_at:
+                                inactivity_duration = time.time() - self._websocket_last_message_at
+                                if inactivity_duration >= self._websocket_app_active_timeout:
+                                    logger.debug(
+                                        f"WebSocket quiet for {inactivity_duration:.1f}s "
+                                        f"(exceeded timeout of {self._websocket_app_active_timeout}s), reconnecting..."
                                     )
                                     break
                             
@@ -668,7 +697,7 @@ class IquaSoftener:
                                 # Just loop back to check connection duration
                                 continue
                             except websockets.exceptions.ConnectionClosed:
-                                logger.info("WebSocket connection closed by server")
+                                logger.debug("WebSocket connection closed by server")
                                 break
                     except asyncio.CancelledError:
                         logger.debug("WebSocket connection cancelled - shutting down gracefully")
@@ -794,6 +823,9 @@ class IquaSoftener:
 
     async def _handle_websocket_message(self, data: Dict[str, Any]):
         """Handle incoming WebSocket message."""
+        # Update last message timestamp
+        self._websocket_last_message_at = time.time()
+
         if data.get("type") == "property" and "name" in data:
             property_name = data["name"]
             with self._websocket_lock:
@@ -803,6 +835,23 @@ class IquaSoftener:
                 f"Updated real-time property: {property_name} = {data.get('value')}"
             )
             
+            # Dynamically update timeout if app_active_timeout is received (assumed in minutes)
+            if property_name == "app_active_timeout":
+                try:
+                    val = float(data.get("value", 5))
+                    # Clamp the parsed value between 1 and 60 minutes for safety
+                    clamped_val = max(1.0, min(val, 60.0))
+                    self._websocket_app_active_timeout = clamped_val * 60.0
+                    logger.debug(f"Updated WebSocket app_active_timeout to {self._websocket_app_active_timeout}s ({clamped_val}m)")
+                except (ValueError, TypeError):
+                    pass
+
+            # The iqua2 API lets us know when the socket needs to be refreshed by sending a message that app_active is False,
+            # so request a reconnect to restart the data stream
+            if property_name == "app_active" and data.get("value") in (False, 0, "false", "False"):
+                logger.debug("Received app_active = False, forcing WebSocket reconnect to keep data stream active")
+                self._websocket_force_reconnect = True
+
             # Notify callback if registered (for Home Assistant integration)
             if self._on_websocket_data_update:
                 try:
@@ -1094,7 +1143,7 @@ class IquaSoftener:
             r.raise_for_status()
         return r
 
-    def _get_device_detail(self, device_id: str) -> dict:
+    def _get_device_detail(self, device_id: str, use_cache_only: bool = False) -> dict:
         """Get detailed device information with caching and backoff to avoid rate limits.
         
         The /detail-or-summary endpoint is rate-limited by the API.
@@ -1106,7 +1155,7 @@ class IquaSoftener:
         current_time = time.time()
         
         # Check if we're in backoff period (rate limited)
-        if self._device_detail_next_retry_at and current_time < self._device_detail_next_retry_at:
+        if not use_cache_only and self._device_detail_next_retry_at and current_time < self._device_detail_next_retry_at:
             if self._device_detail_cache is not None:
                 time_until_retry = self._device_detail_next_retry_at - current_time
                 logger.debug(
@@ -1119,15 +1168,18 @@ class IquaSoftener:
                 logger.debug("Backoff period active but no cache available, allowing retry")
                 self._device_detail_next_retry_at = None
         
-        # Return cached data if available and still fresh
-        if (
-            self._device_detail_cache is not None
-            and self._device_detail_cached_at is not None
-            and (current_time - self._device_detail_cached_at) < self._device_detail_cache_duration
+        # Return cached data if available and (still fresh or cache-only requested)
+        if self._device_detail_cache is not None and (
+            use_cache_only
+            or (
+                self._device_detail_cached_at is not None
+                and (current_time - self._device_detail_cached_at) < self._device_detail_cache_duration
+            )
         ):
             logger.debug(
-                "Using cached device detail (age: %.1f seconds)",
-                current_time - self._device_detail_cached_at
+                "Using cached device detail (age: %.1f seconds, cache_only: %s)",
+                current_time - (self._device_detail_cached_at or 0),
+                use_cache_only
             )
             return self._device_detail_cache
         

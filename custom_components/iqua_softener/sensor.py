@@ -342,9 +342,16 @@ class IquaSoftenerCoordinator(DataUpdateCoordinator):
             if self.data is None:
                 return
 
-            # Update coordinator data without triggering _async_update_data()
-            # This notifies all listeners (sensors) of data changes
-            self.async_set_updated_data(self.data)
+            # Rebuild coordinator data from in-memory state (cache + realtime updates)
+            data = await self.hass.async_add_executor_job(
+                lambda: self._iqua_softener.get_data(use_cache_only=True)
+            )
+
+            # Update coordinator data without rescheduling the periodic poll.
+            # This directly updates self.data and notifies listeners of changes.
+            self.data = data
+            self.last_update_success = True
+            self.async_update_listeners()
             _LOGGER.debug("Coordinator data updated from WebSocket properties")
         except Exception as err:
             _LOGGER.debug("Error updating coordinator data from WebSocket: %s", err)
@@ -446,7 +453,7 @@ class IquaSoftenerCoordinator(DataUpdateCoordinator):
                             data.device_date_time, device_tz, 
                             local_time, local_time.tzinfo)
             
-            _LOGGER.info("✅ API refresh completed successfully")
+            _LOGGER.info("✅ API refresh completed successfully - gallons used today: %s", data.today_use)
             return data
             
         except TypeError as err:
