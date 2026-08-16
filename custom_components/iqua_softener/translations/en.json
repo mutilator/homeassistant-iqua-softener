@@ -73,7 +73,15 @@
         "name": "Water Usage Daily Average"
       },
       "water_shutoff_valve_state": {
-        "name": "Water Shutoff Valve State"
+        "name": "Water Shutoff Valve State",
+        "state": {
+          "open": "Open",
+          "close": "Closed",
+          "manual": "Manual override",
+          "not_installed": "Not installed",
+          "unknown": "Unknown",
+          "error": "Error"
+        }
       },
       "wifi_signal_strength": {
         "name": "WiFi Signal Strength"

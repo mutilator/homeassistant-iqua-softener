@@ -76,6 +76,9 @@ def mock_iqua_data():
         out_of_salt_estimated_days=30,
         hardness_grains=10,
         water_shutoff_valve_state=1,
+        water_shutoff_valve_status="open",
+        water_shutoff_valve_error_code=None,
+        water_shutoff_valve_manual_override=False,
         enriched_data={
             "regeneration": {
                 "regeneration_status": "none",
@@ -83,6 +86,10 @@ def mock_iqua_data():
             }
         },
         additional_properties={
+            # Regeneration rotor position
+            "valve_pos_switch_enum": {
+                "value": 0
+            },
             "treated_water_avail_gals": {
                 "converted_value": 1000,
                 "converted_units": "Gallons"

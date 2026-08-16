@@ -17,6 +17,7 @@ from .vendor.iqua_softener import (
     IquaSoftenerData,
     IquaSoftenerVolumeUnit,
     IquaSoftenerException,
+    WATER_SHUTOFF_VALVE_STATUSES,
 )
 
 from homeassistant import config_entries, core
@@ -843,41 +844,40 @@ class IquaSoftenerWaterUsageDailyAverageSensor(IquaSoftenerSensor):
 
 
 class IquaSoftenerWaterShutoffValveStateSensor(IquaSoftenerSensor):
+    """Status of the water shutoff valve.
+
+    Reports the API's own status enum rather than a boolean, so states that are
+    not simply open/closed ("manual", "error") stay visible.
+    """
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(WATER_SHUTOFF_VALVE_STATUSES)
+    _attr_translation_key = "water_shutoff_valve_state"
+
     def update(self, data: IquaSoftenerData):
         try:
-            prop = (
-                data.additional_properties.get("valve_pos_switch_enum")
-                if data.additional_properties
-                else None
+            status = data.water_shutoff_valve_status
+            if status is None:
+                # Fall back to the on/off integer for payloads that only carry it
+                status = {1: "open", 0: "close"}.get(data.water_shutoff_valve_state)
+
+            self._attr_native_value = (
+                status if status in WATER_SHUTOFF_VALVE_STATUSES else "unknown"
             )
-            if prop is not None:
-                valve_state = prop.get("converted_value", prop.get("value"))
-            elif hasattr(data, "water_shutoff_valve_state"):
-                # Convert numeric state to text
-                valve_state = data.water_shutoff_valve_state
-            else:
-                valve_state = None
-
-            if valve_state is not None:
-                if valve_state == 1:
-                    self._attr_native_value = "Open"
-                elif valve_state == 0:
-                    self._attr_native_value = "Closed"
-                else:
-                    self._attr_native_value = f"Unknown ({valve_state})"
-                return
-
-            self._attr_native_value = "Unknown"
+            self._attr_extra_state_attributes = {
+                "error_code": data.water_shutoff_valve_error_code,
+                "manual_override": data.water_shutoff_valve_manual_override,
+            }
         except Exception as err:
             _LOGGER.error("Error updating water shutoff valve sensor: %s", err)
             if not hasattr(self, '_attr_native_value'):
-                self._attr_native_value = "Unknown"
+                self._attr_native_value = "unknown"
 
     @property
     def icon(self) -> Optional[str]:
-        if self._attr_native_value == "Open":
+        if self._attr_native_value == "open":
             return "mdi:valve-open"
-        elif self._attr_native_value == "Closed":
+        elif self._attr_native_value == "close":
             return "mdi:valve-closed"
         else:
             return "mdi:valve"
@@ -937,10 +937,18 @@ class IquaSoftenerWiFiSignalStrengthSensor(IquaSoftenerSensor):
 
 
 class IquaSoftenerWebSocketConnectionSensor(SensorEntity, CoordinatorEntity):
-    """Sensor for WebSocket connection status."""
-    
+    """Sensor for WebSocket connection status.
+
+    Disabled by default - it reports on the integration's own transport rather
+    than the softener, so it is only of interest when troubleshooting. Home
+    Assistant applies this default when the entity is first registered, so
+    installs that already expose the sensor keep it enabled.
+    """
+
+    _attr_entity_registry_enabled_default = False
+
     coordinator: IquaSoftenerCoordinator  # Type hint override for proper attribute access
-    
+
     def __init__(self, coordinator: IquaSoftenerCoordinator, device_serial_number: str):
         super().__init__(coordinator)
         self._device_serial_number = device_serial_number

@@ -4,6 +4,7 @@ from .iqua import (
     IquaSoftenerData,
     IquaSoftenerState,
     IquaSoftenerVolumeUnit,
+    WATER_SHUTOFF_VALVE_STATUSES,
 )
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"

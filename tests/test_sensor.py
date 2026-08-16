@@ -1,10 +1,15 @@
 """Test the iQua Softener sensor entities."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntityDescription
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
+
+from custom_components.iqua_softener.const import DOMAIN
 
 from custom_components.iqua_softener.sensor import (
     IquaSoftenerCoordinator,
@@ -170,10 +175,14 @@ class TestSensorEntities:
     async def test_valve_state_sensor(self, hass, init_integration):
         """Test the water shutoff valve state sensor through the state machine."""
         await hass.async_block_till_done()
-        
+
         state = hass.states.get("sensor.device123_water_shutoff_valve_state")
         assert state is not None
-        assert state.state == "Open"
+        # The fixture's valve_pos_switch_enum is 0 while the valve status is
+        # "open" - reading the rotor position instead would report "close" here
+        assert state.state == "open"
+        assert state.attributes["manual_override"] is False
+        assert state.attributes["error_code"] is None
 
 
 class TestSensorSetup:
@@ -227,3 +236,146 @@ class TestSensorSetup:
         # Verify sensor exists
         state = hass.states.get("sensor.device123_state")
         assert state is not None
+
+class TestWaterShutoffValveState:
+    """Test water shutoff valve status parsing and reporting.
+
+    Regression coverage for issue #11, where the sensor read the regeneration
+    rotor property `valve_pos_switch_enum` and so never tracked the shutoff
+    valve at all.
+    """
+
+    @staticmethod
+    def _sensor(data):
+        """Build the valve sensor and run one update against `data`."""
+        coordinator = MagicMock()
+        coordinator.data = data
+        sensor = IquaSoftenerWaterShutoffValveStateSensor(
+            coordinator,
+            "DEVICE123",
+            SensorEntityDescription(
+                key="WATER_SHUTOFF_VALVE_STATE",
+                name="Water shutoff valve state",
+                icon="mdi:valve",
+            ),
+        )
+        sensor.update(data)
+        return sensor
+
+    @pytest.mark.parametrize(
+        ("status", "expected_icon"),
+        [
+            ("open", "mdi:valve-open"),
+            ("close", "mdi:valve-closed"),
+            ("manual", "mdi:valve"),
+            ("error", "mdi:valve"),
+            ("not_installed", "mdi:valve"),
+        ],
+    )
+    def test_reports_api_status(self, mock_iqua_data, status, expected_icon):
+        """Every API status is reported verbatim, not collapsed to open/closed."""
+        data = replace(mock_iqua_data, water_shutoff_valve_status=status)
+        sensor = self._sensor(data)
+
+        assert sensor.native_value == status
+        assert sensor.icon == expected_icon
+
+    def test_ignores_regeneration_rotor_property(self, mock_iqua_data):
+        """valve_pos_switch_enum must not influence the shutoff valve sensor."""
+        data = replace(
+            mock_iqua_data,
+            water_shutoff_valve_status="close",
+            water_shutoff_valve_state=0,
+            additional_properties={"valve_pos_switch_enum": {"value": 1}},
+        )
+
+        assert self._sensor(data).native_value == "close"
+
+    def test_falls_back_to_integer_state(self, mock_iqua_data):
+        """Payloads carrying only the on/off integer still resolve."""
+        data = replace(
+            mock_iqua_data,
+            water_shutoff_valve_status=None,
+            water_shutoff_valve_state=0,
+        )
+
+        assert self._sensor(data).native_value == "close"
+
+    def test_unknown_when_nothing_available(self, mock_iqua_data):
+        """No status and no integer means unknown, not a stale open/closed."""
+        data = replace(
+            mock_iqua_data,
+            water_shutoff_valve_status=None,
+            water_shutoff_valve_state=None,
+        )
+
+        assert self._sensor(data).native_value == "unknown"
+
+    def test_surfaces_error_details(self, mock_iqua_data):
+        """error_code and manual_override are exposed as attributes."""
+        data = replace(
+            mock_iqua_data,
+            water_shutoff_valve_status="error",
+            water_shutoff_valve_state=None,
+            water_shutoff_valve_error_code="both_switch_error",
+            water_shutoff_valve_manual_override=True,
+        )
+        sensor = self._sensor(data)
+
+        assert sensor.extra_state_attributes == {
+            "error_code": "both_switch_error",
+            "manual_override": True,
+        }
+
+    def test_options_match_api_enum(self, mock_iqua_data):
+        """The reported options stay in step with the documented API enum."""
+        sensor = self._sensor(mock_iqua_data)
+
+        assert sensor.device_class == SensorDeviceClass.ENUM
+        assert sensor.options == [
+            "open",
+            "close",
+            "manual",
+            "not_installed",
+            "unknown",
+            "error",
+        ]
+
+
+class TestWebSocketConnectionSensorEnabledDefault:
+    """The WebSocket connection sensor is disabled by default on new installs."""
+
+    UNIQUE_ID = "device123_websocket_connection"
+    ENTITY_ID = "sensor.device123_websocket_connection"
+
+    async def test_disabled_on_new_install(self, hass, init_integration):
+        """A fresh install registers the sensor disabled, with no state."""
+        registry = er.async_get(hass)
+
+        entry = registry.async_get(self.ENTITY_ID)
+        assert entry is not None
+        assert entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+        assert hass.states.get(self.ENTITY_ID) is None
+
+    async def test_existing_install_keeps_it_enabled(
+        self, hass, mock_config_entry, mock_iqua_softener
+    ):
+        """An install already exposing the sensor is left alone."""
+        mock_config_entry.add_to_hass(hass)
+        registry = er.async_get(hass)
+        # Pre-register the sensor the way an existing install would have it
+        registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            self.UNIQUE_ID,
+            suggested_object_id="device123_websocket_connection",
+            config_entry=mock_config_entry,
+        )
+
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        entry = registry.async_get(self.ENTITY_ID)
+        assert entry is not None
+        assert entry.disabled_by is None
+        assert hass.states.get(self.ENTITY_ID) is not None

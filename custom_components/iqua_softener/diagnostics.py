@@ -84,6 +84,18 @@ async def async_get_config_entry_diagnostics(
                 "water_shutoff_valve_state": (
                     data.water_shutoff_valve_state if hasattr(data, "water_shutoff_valve_state") else None
                 ),
+                "water_shutoff_valve_status": getattr(data, "water_shutoff_valve_status", None),
+                "water_shutoff_valve_error_code": getattr(data, "water_shutoff_valve_error_code", None),
+                "water_shutoff_valve_manual_override": getattr(
+                    data, "water_shutoff_valve_manual_override", None
+                ),
+                # Raw device property - its integer enum is undocumented, so
+                # capture it here to help decode it from real reports
+                "water_shutoff_valve_property": (
+                    (data.additional_properties or {}).get("water_shutoff_valve")
+                    if hasattr(data, "additional_properties")
+                    else None
+                ),
                 "days_since_last_regeneration": (
                     data.days_since_last_regeneration if hasattr(data, "days_since_last_regeneration") else None
                 ),

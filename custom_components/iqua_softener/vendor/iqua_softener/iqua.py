@@ -49,6 +49,32 @@ class IquaSoftenerException(Exception):
     pass
 
 
+# Water shutoff valve status values reported in enriched_data.water_treatment.
+# Source: WaterShutoffValveStatus in https://api.myiquaapp.com/v1/openapi.json
+WATER_SHUTOFF_VALVE_STATUSES = (
+    "open",
+    "close",
+    "manual",
+    "not_installed",
+    "unknown",
+    "error",
+)
+
+# Real-time property carrying the valve position, and its value mapping.
+# The API does not document this enum. The property reads as "is the water shut
+# off": 1 means the valve is closed and 0 means it is open - the inverse of the
+# status strings. Confirmed from a WebSocket capture of a user closing and then
+# re-opening the valve from the iQua app (issue #11). 2 has been seen on a
+# device with no valve installed and is deliberately left undecoded.
+WATER_SHUTOFF_VALVE_PROPERTY = "water_shutoff_valve"
+WATER_SHUTOFF_VALVE_PROPERTY_STATUSES = {0: "open", 1: "close"}
+
+# The `wsov_manual_override` real-time property is deliberately NOT used. It
+# pulses 1 -> junk -> 0 around every valve operation and settles at 0 whatever
+# the valve is doing, so it carries no usable state. The manual override flag
+# comes from enriched_data instead, where the API reports it as a stable bool.
+
+
 @dataclass(frozen=True)
 class IquaSoftenerData:
     timestamp: datetime
@@ -65,9 +91,12 @@ class IquaSoftenerData:
     salt_level_percent: int
     out_of_salt_estimated_days: int
     hardness_grains: int
-    water_shutoff_valve_state: int
+    water_shutoff_valve_state: Optional[int]  # 1 = open, 0 = close, None = neither
     enriched_data: Optional[Dict[str, Any]] = None  # Full enriched_data from API for additional sensors
     additional_properties: Optional[Dict[str, Any]] = None  # Full properties from debug API for detailed data
+    water_shutoff_valve_status: Optional[str] = None  # One of WATER_SHUTOFF_VALVE_STATUSES
+    water_shutoff_valve_error_code: Optional[str] = None
+    water_shutoff_valve_manual_override: Optional[bool] = None
 
 
 class IquaSoftener:
@@ -194,6 +223,20 @@ class IquaSoftener:
                 return val(fallback_name, default)
             return val(name, default)
 
+        valve_data = self._get_water_shutoff_valve_data(device)
+        valve_status = self._parse_water_shutoff_valve_status(valve_data)
+
+        # enriched_data only refreshes on an API poll, so a valve changed from
+        # the iQua app would otherwise take a full poll interval to show up.
+        # Prefer the real-time property when it decodes - except over "error",
+        # which the raw property cannot express and which must stay visible.
+        if valve_status != "error":
+            realtime_status = self._decode_water_shutoff_valve_property(
+                self.get_realtime_property(WATER_SHUTOFF_VALVE_PROPERTY)
+            )
+            if realtime_status is not None:
+                valve_status = realtime_status
+
         model_desc = val("model_description", "Unknown Model")
         model_id = val("model_id", "N/A")
 
@@ -264,9 +307,12 @@ class IquaSoftener:
             salt_level_percent=int(enriched_val("salt_level_percent") or 0),
             out_of_salt_estimated_days=int(val("out_of_salt_estimate_days", 0)),
             hardness_grains=int(val("hardness_grains", 0)),
-            water_shutoff_valve_state=self._get_water_shutoff_valve_state(device),
+            water_shutoff_valve_state=self._water_shutoff_valve_state(valve_status),
             enriched_data=enriched,  # Include full enriched_data for additional sensors
             additional_properties=props,  # Include full properties from device detail API
+            water_shutoff_valve_status=valve_status,
+            water_shutoff_valve_error_code=valve_data.get("error_code"),
+            water_shutoff_valve_manual_override=valve_data.get("manual_override"),
         )
 
     def get_flow_and_salt(self) -> dict:
@@ -450,28 +496,9 @@ class IquaSoftener:
         try:
             device_id = self._get_device_id()
             device = self._get_device_detail(device_id)
-            
-            # Check for water_shutoff_valve in multiple locations
-            valve_data = None
-            
-            # Check enriched_data first
-            enriched = device.get("enriched_data", {}).get("water_treatment", {})
-            valve_data = enriched.get("water_shutoff_valve", {})
-            
-            # If not in enriched_data, check properties
-            if not valve_data:
-                props = device.get("properties", {})
-                valve_data = props.get("water_shutoff_valve", {})
-            
-            # If still not found, check device root level  
-            if not valve_data:
-                valve_data = device.get("water_shutoff_valve", {})
-            
-            # Check if valve is installed
-            if isinstance(valve_data, dict):
-                return valve_data.get("is_installed", False)
-            
-            return False
+
+            valve_data = self._get_water_shutoff_valve_data(device)
+            return valve_data.get("is_installed", False)
         except Exception as e:
             logger.error(f"Error checking water shutoff valve availability: {e}")
             return False
@@ -828,6 +855,15 @@ class IquaSoftener:
 
         if data.get("type") == "property" and "name" in data:
             property_name = data["name"]
+
+            if not self._is_valid_property_update(property_name, data):
+                logger.debug(
+                    "Discarding spurious %s update: %r",
+                    property_name,
+                    data.get("value"),
+                )
+                return
+
             with self._websocket_lock:
                 self._realtime_data[property_name] = data
                 self._update_cached_property_from_websocket(property_name, data)
@@ -883,11 +919,12 @@ class IquaSoftener:
         self._user_id = data.get("user_id")
         self._access_expires_at = data.get("_access_expires_at")
 
-    def _get_water_shutoff_valve_state(self, device: dict) -> int:
-        """Parse water shutoff valve state from API device data."""
+    def _get_water_shutoff_valve_data(self, device: dict) -> dict:
+        """Locate the water shutoff valve block in API device data."""
         # Check enriched_data first (this is where it should be)
         enriched = device.get("enriched_data", {}).get("water_treatment", {})
         valve_data = enriched.get("water_shutoff_valve", {})
+
         # If not in enriched_data, check properties as fallback
         if not valve_data:
             props = device.get("properties", {})
@@ -897,17 +934,74 @@ class IquaSoftener:
         if not valve_data:
             valve_data = device.get("water_shutoff_valve", {})
 
-        if isinstance(valve_data, dict):
-            # Check if valve is installed first
-            is_installed = valve_data.get("is_installed", False)
-            if not is_installed:
-                return 0  # Default to closed if not installed
-                
-            status = valve_data.get("status", "closed")
-            # Convert status string to int: "open" = 1, "closed" = 0
-            return 1 if status == "open" else 0
-        # Fallback for legacy numeric format
-        return int(valve_data) if valve_data is not None else 0
+        return valve_data if isinstance(valve_data, dict) else {}
+
+    @staticmethod
+    def _parse_water_shutoff_valve_status(valve_data: dict) -> Optional[str]:
+        """Parse the valve status string, or None when it can't be determined.
+
+        The enriched_data block carries the status as one of
+        WATER_SHUTOFF_VALVE_STATUSES. The raw `water_shutoff_valve` device
+        property instead carries an integer whose enum mapping the API does not
+        document, so that shape yields None rather than a guess.
+        """
+        status = valve_data.get("status")
+        if status in WATER_SHUTOFF_VALVE_STATUSES:
+            return status
+        if status is not None:
+            logger.debug("Unrecognized water shutoff valve status: %r", status)
+            return "unknown"
+        if valve_data and not valve_data.get("is_installed", True):
+            return "not_installed"
+        return None
+
+    @staticmethod
+    def _is_valid_property_update(property_name: str, data: Dict[str, Any]) -> bool:
+        """Check whether a WebSocket property message is worth storing.
+
+        The valve properties intermittently carry a large counter-like value
+        that is immediately followed by the real one. Storing it would leave
+        the valve entity briefly reporting a stale poll value on every command,
+        so those messages are dropped at ingest (issue #11).
+        """
+        value = data.get("value")
+        if property_name == WATER_SHUTOFF_VALVE_PROPERTY:
+            return IquaSoftener._decode_water_shutoff_valve_property(value) is not None
+        return True
+
+    @staticmethod
+    def _decode_water_shutoff_valve_property(value: Any) -> Optional[str]:
+        """Decode the real-time `water_shutoff_valve` value to a status.
+
+        The WebSocket intermittently publishes a large counter-like value under
+        this property name and then immediately re-publishes the real one, so
+        anything outside the known mapping is rejected rather than reported.
+        Such a value is truthy, so naive handling would read it as a valid
+        position every time the valve was operated.
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return None
+        try:
+            status = WATER_SHUTOFF_VALVE_PROPERTY_STATUSES.get(int(value))
+        except (TypeError, ValueError):
+            return None
+        if status is None:
+            logger.debug("Ignoring undecodable water shutoff valve value: %r", value)
+        return status
+
+    @staticmethod
+    def _water_shutoff_valve_state(status: Optional[str]) -> Optional[int]:
+        """Map a valve status to the on/off integer used by the switch entity.
+
+        Only "open" and "close" are on/off states. Every other status
+        ("manual", "error", ...) is reported as None instead of being collapsed
+        into "closed", which would misrepresent the valve.
+        """
+        if status == "open":
+            return 1
+        if status == "close":
+            return 0
+        return None
 
     def _get_device_id(self) -> str:
         """Get the device ID for the configured serial number."""

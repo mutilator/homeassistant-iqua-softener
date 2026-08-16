@@ -5,6 +5,46 @@ All notable changes to the iQua Softener Home Assistant integration will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0]
+
+### Breaking Changes
+
+- **Valve state values**: `sensor.<serial>_water_shutoff_valve_state` now reports `open`, `close`, `manual`, `not_installed`, `unknown`, or `error` instead of `Open`/`Closed`. The UI still shows friendly labels; automations matching `Open`/`Closed` need updating to `open`/`close`.
+
+### Changed
+
+- **WebSocket Connection sensor disabled by default**, new installs only — existing installs keep it enabled. Websocket is more reliable now so this is unnecessary unless there are issues.
+
+### Fixed
+
+- **Valve state updated incorrectly** ([#11](https://github.com/mutilator/homeassistant-iqua-softener/issues/11)): the sensor read `valve_pos_switch_enum`, the regeneration rotor position, not the shutoff valve
+- **`manual` and `error` reported as closed**: any status other than `open` mapped to closed, and the code checked for `closed` where the API sends `close`. Non-boolean statuses now report unknown
+- **Broken `properties` fallback**: silently returned "closed" when `enriched_data` had no valve block; now reports unknown
+
+### Added
+
+- **Real-time valve updates over WebSocket**: valve changes from the iQua app now appear in about a second instead of up to a full poll interval
+  - `water_shutoff_valve` reads as "is the water shut off": `1` is closed, `0` is open.
+  - `error` is never overridden by the real-time position; `wsov_manual_override` is unused (it carries no stable state)
+- Valve `error_code` and `manual_override` as attributes on the valve sensor and switch
+- Valve status, error code, override flag, and raw `water_shutoff_valve` property in diagnostics
+
+## [2.3.1] - 
+
+# Updates
+
+Thanks @drderiv
+
+ - Correct Online State for iQua2
+   - Updated the client to use the iqua2.com is_online field instead of the legacy service_active, fixing incorrect “Offline” state reporting.
+- Smarter WebSocket Session Handling
+  - Extended max session duration to 60 minutes.
+  - Added idle‑timeout tracking to trigger reconnects when the socket goes quiet.
+  - Immediate reconnect when app_active = False is received.
+- Real-Time Coordinator Updates
+- Fixed Polling Delay Loop  
+- Reduced Log Noise + Better Diagnostics  - Lowered repetitive WebSocket logs to DEBUG and added clearer INFO logs for successful polling.
+
 ## [2.2.1] - 2026-05-18
 
 ### Fixes

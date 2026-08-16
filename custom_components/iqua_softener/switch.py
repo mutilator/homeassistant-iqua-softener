@@ -112,11 +112,20 @@ class IquaSoftenerWaterShutoffValveSwitch(SwitchEntity, CoordinatorEntity):
                 self._optimistic_state = None
                 self._optimistic_until = None
 
-        if data and hasattr(data, "water_shutoff_valve_state"):
-            # Assuming 1 = open (on), 0 = closed (off)
+        if data and data.water_shutoff_valve_state is not None:
+            # 1 = open (on), 0 = closed (off)
             self._attr_is_on = bool(data.water_shutoff_valve_state)
         else:
+            # "manual", "error" and friends are not on/off states
             self._attr_is_on = None
+
+        self._attr_extra_state_attributes = {
+            "valve_status": data.water_shutoff_valve_status if data else None,
+            "error_code": data.water_shutoff_valve_error_code if data else None,
+            "manual_override": (
+                data.water_shutoff_valve_manual_override if data else None
+            ),
+        }
 
     @property
     def available(self) -> bool:
