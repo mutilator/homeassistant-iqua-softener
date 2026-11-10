@@ -1,7 +1,7 @@
 {
   "domain": "iqua_softener",
   "name": "iQua Softener",
-  "codeowners": ["@mutilator", "@arturzx", "@jmacul2"],
+  "codeowners": ["@mutilator"],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/mutilator/homeassistant-iqua-softener/",
@@ -11,5 +11,5 @@
   "loggers": ["iqua"],
   "quality_scale": "silver",
   "requirements": [],
-  "version": "2.4.0"
+  "version": "2.4.1"
 }
