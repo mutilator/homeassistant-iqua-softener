@@ -34,10 +34,6 @@ async def async_setup_entry(
     if entry.options:
         hass_data.update(entry.options)
 
-    _LOGGER.info("Configuration data: %s", hass_data)
-    _LOGGER.info("Entry data: %s", entry.data)
-    _LOGGER.info("Entry options: %s", entry.options)
-
     # Create shared coordinator
     update_interval_minutes = hass_data.get(
         CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL

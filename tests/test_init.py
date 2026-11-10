@@ -13,6 +13,94 @@ from custom_components.iqua_softener.const import DOMAIN
 class TestIntegrationSetup:
     """Test the integration setup functionality."""
 
+    @pytest.mark.parametrize("log_level", ["INFO", "DEBUG"])
+    @pytest.mark.parametrize("override_password", [False, True])
+    async def test_setup_and_reload_do_not_log_passwords(
+        self, hass, config_entry_data, mock_iqua_softener, caplog,
+        log_level, override_password,
+    ):
+        """Keep credentials out of setup logs without changing client inputs."""
+        from pytest_homeassistant_custom_component.common import MockConfigEntry
+        from custom_components.iqua_softener.const import (
+            CONF_ENABLE_WEBSOCKET,
+            CONF_PASSWORD,
+            CONF_UPDATE_INTERVAL,
+            CONF_USERNAME,
+        )
+
+        saved_password = "synthetic-saved-password"
+        effective_password = (
+            "synthetic-options-password" if override_password else saved_password
+        )
+        entry_data = {
+            **config_entry_data,
+            CONF_USERNAME: "setup-test@example.invalid",
+            CONF_PASSWORD: saved_password,
+            CONF_ENABLE_WEBSOCKET: False,
+        }
+        options = {CONF_UPDATE_INTERVAL: 7}
+        if override_password:
+            options[CONF_PASSWORD] = effective_password
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data=entry_data,
+            options=options,
+            version=3,
+        )
+        entry.add_to_hass(hass)
+        coordinator = MagicMock()
+        coordinator.async_config_entry_first_refresh = AsyncMock()
+        coordinator.async_stop_websocket = AsyncMock()
+
+        with (
+            caplog.at_level(log_level, logger="custom_components.iqua_softener"),
+            patch(
+                "custom_components.iqua_softener.IquaSoftener",
+                return_value=mock_iqua_softener,
+            ) as client_factory,
+            patch(
+                "custom_components.iqua_softener.IquaSoftenerCoordinator",
+                return_value=coordinator,
+            ),
+            patch.object(
+                hass.config_entries, "async_forward_entry_setups",
+                new_callable=AsyncMock,
+            ) as forward_setups,
+            patch.object(
+                hass.config_entries, "async_unload_platforms",
+                new_callable=AsyncMock, return_value=True,
+            ),
+        ):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+            await options_update_listener(hass, entry)
+            await hass.async_block_till_done()
+
+        assert client_factory.call_count == 2
+        assert all(
+            call.args == (entry_data[CONF_USERNAME], effective_password)
+            for call in client_factory.call_args_list
+        )
+        assert coordinator.async_config_entry_first_refresh.await_count == 2
+        assert forward_setups.await_count == 2
+        assert hass.data[DOMAIN][entry.entry_id]["coordinator"] is coordinator
+        records = [
+            record for record in caplog.records
+            if record.name == "custom_components.iqua_softener"
+            or record.name.startswith("custom_components.iqua_softener.")
+        ]
+        assert records
+        assert not any(
+            password in record.getMessage() or password in repr(record.args)
+            for record in records
+            for password in (saved_password, effective_password)
+        ), "Setup or reload logged a synthetic password"
+        status_message = (
+            "Creating coordinator with update interval: 7 minutes (420 seconds), "
+            "WebSocket: False"
+        )
+        assert sum(record.getMessage() == status_message for record in records) == 2
+
     async def test_async_setup_entry_success(self, hass, init_integration):
         """Test successful integration setup using init_integration."""
         # init_integration already handles async_setup properly
