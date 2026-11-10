@@ -15,7 +15,7 @@ This directory contains comprehensive tests for the Home Assistant iQua Softener
 
 ### Prerequisites
 
-1. Python 3.12+ installed
+1. Python 3.14.2+ installed (required by Home Assistant 2026.11)
 2. Virtual environment activated:
    ```bash
    python -m venv venv
@@ -24,7 +24,7 @@ This directory contains comprehensive tests for the Home Assistant iQua Softener
 3. Install the package in development mode:
    ```bash
    pip install -e .
-   pip install pytest pytest-homeassistant-custom-component
+   pip install -r test-requirements.txt
    ```
 
 ### Run All Tests
@@ -168,12 +168,12 @@ The project includes configuration files for proper IDE support:
 - **pyrightconfig.json**: Configures type checking and venv recognition
 - **.vscode/settings.json**: VS Code-specific Python settings
 
-If you see import errors for `pytest_homeassistant_custom_component`:
+If you see import errors for `pytest_homeassistant`:
 1. Ensure your virtual environment is activated
 2. Reload the VS Code window: `Ctrl+Shift+P` → "Reload Window"
 3. Check that `python.defaultInterpreterPath` points to `venv/bin/python`
 
-The `reportMissingImports` is set to `"none"` because `pytest-homeassistant-custom-component` doesn't include a `py.typed` marker file.
+The `reportMissingImports` is set to `"none"` because `pytest-homeassistant` doesn't include a `py.typed` marker file.
 
 ## Test Results
 

@@ -3,4 +3,6 @@ pytest>=7.0.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.0.0
 pytest-mock>=3.10.0
-pytest-homeassistant-custom-component>=0.1.0
+# Official Home Assistant test helpers; pins the matching homeassistant release.
+# Replaces pytest-homeassistant-custom-component (do not install both).
+pytest-homeassistant>=2026.11.1

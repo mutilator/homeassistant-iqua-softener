@@ -37,9 +37,9 @@ class TestManifest:
         """Test manifest requirements."""
         manifest = load_manifest()
         assert "requirements" in manifest
-        # Should have requests and PyJWT as requirements
-        assert "requests" in manifest["requirements"]
-        assert "PyJWT" in manifest["requirements"]
+        # requests and PyJWT ship with Home Assistant, so hassfest rejects
+        # listing them; the vendored library needs no other packages
+        assert manifest["requirements"] == []
 
 
 class TestConstants:

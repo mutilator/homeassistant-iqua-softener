@@ -20,7 +20,7 @@ class TestIntegrationSetup:
         log_level, override_password,
     ):
         """Keep credentials out of setup logs without changing client inputs."""
-        from pytest_homeassistant_custom_component.common import MockConfigEntry
+        from pytest_homeassistant.common import MockConfigEntry
         from custom_components.iqua_softener.const import (
             CONF_ENABLE_WEBSOCKET,
             CONF_PASSWORD,
@@ -126,7 +126,7 @@ class TestIntegrationSetup:
 
     async def test_async_setup_entry_websocket_enabled(self, hass, config_entry_data, mock_iqua_softener, mock_iqua_data):
         """Test setup with WebSocket enabled."""
-        from pytest_homeassistant_custom_component.common import MockConfigEntry
+        from pytest_homeassistant.common import MockConfigEntry
         from custom_components.iqua_softener.const import CONF_ENABLE_WEBSOCKET
         
         # Create config entry with WebSocket enabled
@@ -149,7 +149,7 @@ class TestIntegrationSetup:
 
     async def test_async_setup_entry_websocket_disabled(self, hass, config_entry_data, mock_iqua_softener, mock_iqua_data):
         """Test setup with WebSocket disabled."""
-        from pytest_homeassistant_custom_component.common import MockConfigEntry
+        from pytest_homeassistant.common import MockConfigEntry
         from custom_components.iqua_softener.const import CONF_ENABLE_WEBSOCKET
         
         # Create config entry with WebSocket disabled

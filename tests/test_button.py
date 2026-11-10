@@ -1,6 +1,6 @@
 """Tests for the Iqua Softener button platform."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
@@ -114,7 +114,7 @@ class TestButtonSetup:
     @pytest.mark.asyncio
     async def test_async_setup_entry_success(self, hass, config_entry_data, mock_iqua_data):
         """Test successful button platform setup."""
-        from pytest_homeassistant_custom_component.common import MockConfigEntry
+        from pytest_homeassistant.common import MockConfigEntry
         
         # Create mock coordinator
         mock_coordinator = MagicMock(spec=DataUpdateCoordinator)
@@ -136,7 +136,7 @@ class TestButtonSetup:
         }
 
         # Mock async_add_entities
-        async_add_entities = AsyncMock()
+        async_add_entities = MagicMock()
 
         # Call async_setup_entry
         await async_setup_entry(hass, test_config_entry, async_add_entities)
@@ -155,7 +155,7 @@ class TestButtonSetup:
         hass.data[DOMAIN][mock_config_entry.entry_id] = {}
 
         # Mock async_add_entities
-        async_add_entities = AsyncMock()
+        async_add_entities = MagicMock()
 
         # Call async_setup_entry
         await async_setup_entry(hass, mock_config_entry, async_add_entities)
@@ -166,7 +166,7 @@ class TestButtonSetup:
     @pytest.mark.asyncio
     async def test_async_setup_entry_with_product_serial(self, hass, config_entry_data, mock_iqua_data):
         """Test button platform setup with product serial number."""
-        from pytest_homeassistant_custom_component.common import MockConfigEntry
+        from pytest_homeassistant.common import MockConfigEntry
         
         # Create mock coordinator
         mock_coordinator = MagicMock(spec=DataUpdateCoordinator)
@@ -189,7 +189,7 @@ class TestButtonSetup:
         }
 
         # Mock async_add_entities
-        async_add_entities = AsyncMock()
+        async_add_entities = MagicMock()
 
         # Call async_setup_entry
         await async_setup_entry(hass, test_config_entry, async_add_entities)

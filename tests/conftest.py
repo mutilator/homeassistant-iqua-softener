@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.iqua_softener.const import (
     DOMAIN,
@@ -20,17 +20,6 @@ from custom_components.iqua_softener.vendor.iqua_softener import (
     IquaSoftenerVolumeUnit,
 )
 
-
-# Automatically enable custom integrations for all tests
-pytest_plugins = ["pytest_homeassistant_custom_component"]
-
-
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(request):
-    """Enable custom integrations only for tests that set up Home Assistant."""
-    if "hass" in request.fixturenames or "init_integration" in request.fixturenames:
-        request.getfixturevalue("enable_custom_integrations")
-    yield
 
 
 @pytest.fixture(autouse=True)
