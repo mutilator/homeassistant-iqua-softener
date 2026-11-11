@@ -11,5 +11,5 @@
   "loggers": ["iqua"],
   "quality_scale": "silver",
   "requirements": [],
-  "version": "2.4.1"
+  "version": "2.5.0"
 }

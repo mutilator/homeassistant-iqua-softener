@@ -55,15 +55,6 @@ a raw `resin_alert` integer of 0 or 1. A readable value indicates available API
 data; it does not guarantee physical feature support on every model. No model
 allowlist is used. Reload the integration if the field first appears after setup.
 
-The enriched boolean takes priority, including `false`; a valid raw integer is
-used when the enriched value is absent or invalid. On means an active maintenance
-alert and off means explicitly clear. An existing entity becomes unavailable if
-neither value is valid, the coordinator update fails, or the device is reported
-offline, and recovers when valid data returns. It uses existing coordinator data
-without additional API requests. Existing polling, caching, and WebSocket behavior
-are unchanged; cached or enriched values may lag the device, so this is not a
-real-time alarm guarantee.
-
 ## Real-Time Data Updates
 
 The integration supports real-time data updates via WebSocket connection for select sensors:
