@@ -103,7 +103,7 @@ async def async_setup_entry(
     else:
         _LOGGER.info("WebSocket is disabled in configuration")
 
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "switch", "select", "button"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "switch", "select", "button"])
     return True
 
 
@@ -323,7 +323,7 @@ async def async_unload_entry(
 
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(
-        entry, ["sensor", "switch", "select", "button"]
+        entry, ["sensor", "binary_sensor", "switch", "select", "button"]
     )
 
     if unload_ok:
